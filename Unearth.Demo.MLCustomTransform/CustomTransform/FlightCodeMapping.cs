@@ -6,11 +6,14 @@ using Unearth.Demo.MLCustomTransform.Models;
 namespace Unearth.Demo.MLCustomTransform.CustomTransform
 {
  
+    // The names of the input columns we want to be passed to our transformer
     public class FlightCodeCMInput
     {
         public string FlightCode { get; set; }
     }
 
+    // The names of the output columns we want our transformer to add to the pipeline
+    // If the name is the same as an existing column then that column will be replaced
     public class FlightCodeCMOutput
     {
         public float SpecialFeature { get; set; }

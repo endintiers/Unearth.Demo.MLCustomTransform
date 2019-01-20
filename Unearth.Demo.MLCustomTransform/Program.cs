@@ -4,7 +4,9 @@ using Microsoft.ML.Core.Data;
 using Microsoft.ML.Data;
 using Microsoft.ML.Transforms.Text;
 using System;
+using System.ComponentModel.Composition.Hosting;
 using System.IO;
+using System.Reflection;
 using Unearth.Demo.MLCustomTransform.CustomTransform;
 using Unearth.Demo.MLCustomTransform.Models;
 
@@ -14,14 +16,20 @@ namespace Unearth.Demo.MLCustomTransform
     {
         static void Main(string[] args)
         {
-            var txtFeatModel = TrainModel();
-            var txtFeatAccuracy = TestModel(txtFeatModel);
+            var modelFilePath = Path.Combine(GetAssemblyPath(), @"savedmodel.zip");
+
+            // Train and save the model
+            var model = TrainModel(modelFilePath);
+
+            // Load and Test the model
+            var accuracy = TestModel(modelFilePath: modelFilePath);
+
             Console.WriteLine("Finished");
             Console.ReadLine();
 
         }
 
-        private static ITransformer TrainModel(bool useCharGrams = false)
+        private static ITransformer TrainModel(string modelFilePath = null)
         {
             var mlContext = new MLContext(seed: 0);
 
@@ -61,13 +69,29 @@ namespace Unearth.Demo.MLCustomTransform
             Console.WriteLine($"Training took {elapsedMs / 1000f} secs");
             Console.WriteLine();
 
+            if(!string.IsNullOrWhiteSpace(modelFilePath))
+            {
+                using (var fs = File.Create(modelFilePath))
+                    mlContext.Model.Save(trainedModel, fs);
+            }
+
             return trainedModel;
         }
 
-        private static float TestModel(ITransformer model)
+        private static float TestModel(ITransformer model = null, string modelFilePath = null)
         {
             // Create an ML.NET environment
             var mlContext = new MLContext(seed: 0);
+
+            if (!string.IsNullOrWhiteSpace(modelFilePath))
+            {
+                // Create a custom composition container for all our custom mapping actions.
+                mlContext.CompositionContainer = new CompositionContainer(new TypeCatalog(typeof(CustomMappings)));
+
+                // Load the model.
+                using (var fs = File.OpenRead(modelFilePath))
+                    model = mlContext.Model.Load(fs);
+            }
 
             // Make a predictor using the trained model
             var flightCodePredictor = model.CreatePredictionEngine<FlightCodeFeatures, FlightCodePrediction>(mlContext);
@@ -113,6 +137,15 @@ namespace Unearth.Demo.MLCustomTransform
             Console.WriteLine($"Accuracy: {accuracy}");
             Console.WriteLine();
             return accuracy;
+        }
+
+        private static string GetAssemblyPath()
+        {
+            string codeBase = Assembly.GetExecutingAssembly().CodeBase;
+            UriBuilder uri = new UriBuilder(codeBase);
+            string result = Uri.UnescapeDataString(uri.Path);
+            result = Path.GetDirectoryName(result);
+            return result;
         }
     }
 }
