@@ -1,14 +1,11 @@
 ﻿using CsvHelper;
 using Microsoft.ML;
-using Microsoft.ML.Core.Data;
 using Microsoft.ML.Data;
-using Microsoft.ML.Transforms.Text;
 using System;
-using System.ComponentModel.Composition.Hosting;
 using System.IO;
 using System.Reflection;
-using Unearth.Demo.MLCustomTransform.CustomTransform;
 using Unearth.Demo.MLCustomTransform.Models;
+using Unearth.Demo.MLCustomTransform.CustomTransforms;
 
 namespace Unearth.Demo.MLCustomTransform
 {
@@ -35,33 +32,36 @@ namespace Unearth.Demo.MLCustomTransform
 
             // Create a view of the training data
             var dataPath = @"TrainingData\FlightCodes.csv";
-            TextLoader textLoader = mlContext.Data.CreateTextReader(new TextLoader.Arguments()
-            {
-                Separator = ",",
-                HasHeader = true,
-                Column = new[]
+            TextLoader textLoader = mlContext.Data.CreateTextLoader(
+                separatorChar: ',',
+                hasHeader: true,
+                columns: new[]
                     {
-                        new TextLoader.Column("FlightCode", DataKind.Text, 0),
-                        new TextLoader.Column("IATACode", DataKind.Text, 1),
+                        new TextLoader.Column("FlightCode", DataKind.String, 0),
+                        new TextLoader.Column("IATACode", DataKind.String, 1),
                     }
-            });
-            var trainingDataView = textLoader.Read(dataPath);
+            );
+            var trainingDataView = textLoader.Load(dataPath);
 
-            EstimatorChain<ITransformer> dataProcessPipeline = null;
-
-            dataProcessPipeline = mlContext.Transforms.Conversion.MapValueToKey("IATACode", "Label")
+            // Set the key column (IATACode), featurize the text FlightCode column (to a long) and add it to the features collection
+            var dataPipeline = mlContext.Transforms.Conversion.MapValueToKey(outputColumnName: "Label", inputColumnName: nameof(FlightCodeFeatures.IATACode))
                 .Append(mlContext.Transforms.CustomMapping<FlightCodeCMInput, FlightCodeCMOutput>(FlightCodeMapping.Transform, nameof(FlightCodeMapping)))
-                .Append(mlContext.Transforms.Text.FeaturizeText("FlightCode", "FlightCodeFeaturized"))
-                .Append(mlContext.Transforms.Concatenate("Features", "FlightCodeFeaturized", "SpecialFeature"));
+                .Append(mlContext.Transforms.Text.FeaturizeText(outputColumnName: "FlightCodeFeaturized", inputColumnName: nameof(FlightCodeFeatures.FlightCode)))
+                .Append(mlContext.Transforms.Concatenate(outputColumnName: "Features", "FlightCodeFeaturized", "SpecialFeature"));
 
-            Console.WriteLine("Training the Model");
+            // Optionally cache the input (used if multiple passes required)
+            dataPipeline.AppendCacheCheckpoint(mlContext);
 
-            var trainer = mlContext.MulticlassClassification.Trainers.StochasticDualCoordinateAscent(DefaultColumnNames.Label, DefaultColumnNames.Features);
+            // Define the trainer to be used
+            IEstimator<ITransformer> trainer = null;
+            trainer = mlContext.MulticlassClassification.Trainers.SdcaMaximumEntropy();
 
-            var trainingPipeline = dataProcessPipeline.Append(trainer)
+            // Create a training pipeline that adds the trainer to the data pipeline and maps prediction to a string in the output (default name)
+            var trainingPipeline = dataPipeline.Append(trainer)
                     .Append(mlContext.Transforms.Conversion.MapKeyToValue("PredictedLabel"));
 
             // Do the actual training, reads the features and builds the model
+            Console.WriteLine("Training the Model");
             var watch = System.Diagnostics.Stopwatch.StartNew();
             var trainedModel = trainingPipeline.Fit(trainingDataView);
             watch.Stop();
@@ -72,7 +72,7 @@ namespace Unearth.Demo.MLCustomTransform
             if(!string.IsNullOrWhiteSpace(modelFilePath))
             {
                 using (var fs = File.Create(modelFilePath))
-                    mlContext.Model.Save(trainedModel, fs);
+                    mlContext.Model.Save(trainedModel, null, fs);
             }
 
             return trainedModel;
@@ -85,16 +85,17 @@ namespace Unearth.Demo.MLCustomTransform
 
             if (!string.IsNullOrWhiteSpace(modelFilePath))
             {
-                // Create a custom composition container for all our custom mapping actions.
-                mlContext.CompositionContainer = new CompositionContainer(new TypeCatalog(typeof(CustomMappings)));
+                // Allow the new context to find the custom mapper we used in the pipeline
+                mlContext.ComponentCatalog.RegisterAssembly(typeof(FlightCodeMapping).Assembly);
 
                 // Load the model.
+                DataViewSchema schema = null;
                 using (var fs = File.OpenRead(modelFilePath))
-                    model = mlContext.Model.Load(fs);
+                    model = mlContext.Model.Load(fs, out schema);
             }
 
             // Make a predictor using the trained model
-            var flightCodePredictor = model.CreatePredictionEngine<FlightCodeFeatures, FlightCodePrediction>(mlContext);
+            var flightCodePredictor = mlContext.Model.CreatePredictionEngine<FlightCodeFeatures, FlightCodePrediction>(model);
 
             // Test the predictor (on data not used for training)
             var defaultColor = Console.ForegroundColor;

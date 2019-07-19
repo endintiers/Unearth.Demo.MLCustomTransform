@@ -1,25 +1,24 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-using Unearth.Demo.MLCustomTransform.Models;
+﻿using Microsoft.ML.Transforms;
+using System;
 
-namespace Unearth.Demo.MLCustomTransform.CustomTransform
+namespace Unearth.Demo.MLCustomTransform.CustomTransforms
 {
- 
-    // The names of the input columns we want to be passed to our transformer
+
+    // The input columns we want to be passed to our transformer
     public class FlightCodeCMInput
     {
         public string FlightCode { get; set; }
     }
 
-    // The names of the output columns we want our transformer to add to the pipeline
+    // The output columns we want our transformer to add to the pipeline
     // If the name is the same as an existing column then that column will be replaced
     public class FlightCodeCMOutput
     {
         public float SpecialFeature { get; set; }
     }
 
-    public class FlightCodeMapping
+    [CustomMappingFactoryAttribute("FlightCodeMapping")]
+    public class FlightCodeMapping : CustomMappingFactory<FlightCodeCMInput, FlightCodeCMOutput>
     {
         static FlightCodeMapping()
         {
@@ -34,5 +33,11 @@ namespace Unearth.Demo.MLCustomTransform.CustomTransform
             else
                 output.SpecialFeature = 0f;
         }
+
+        public override Action<FlightCodeCMInput, FlightCodeCMOutput> GetMapping()
+        {
+            return Transform;
+        }
+
     }
 }
